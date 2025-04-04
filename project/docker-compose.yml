@@ -38,14 +38,21 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    restart: unless-stopped
+    
     environment:
-      GF_INSTALL_PLUGINS: grafana-clock-panel
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      
     ports:
       - 3000:3000
     volumes:
+      - ./files/grafana.ini:/etc/grafana/grafana.ini
+      - ./files/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./files/provisioning/dashboards:/etc/grafana/provisioning/dashboards
       - grafana-data:/var/lib/grafana
     deploy:
+      restart_policy:
+        condition: on-failure   # restart 대체
       mode: replicated
       replicas: 1
       placement:
@@ -99,7 +106,9 @@ services:
     volumes:
       - ./metrics-api:/app
     ports:
-      - "8000:8000"
+      - target: 8000
+        published: 8000
+        mode: host
     depends_on:
       - prometheus
     deploy:
@@ -117,8 +126,8 @@ volumes:
 configs:
   prometheus_config:
     file: ./prometheus.yml
-  grafana_config:
-    file: ./files/grafana.ini
+  # grafana_config:
+  #   file: ./files/grafana.ini
 
 networks:
   monitor_network:
