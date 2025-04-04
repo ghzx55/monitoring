@@ -2,23 +2,26 @@ version: '3.7'
 
 services:
   prometheus:
-    image: prom/prometheus
+    image: prom/prometheus:latest
     ports:
       - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
     command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=1m'
       - '--storage.tsdb.retention.size=100MB'
     deploy:
       mode: replicated
       replicas: 1
       placement:
-        constraints:
-          - node.role == manager
+        constraints: [node.role == manager]
+    networks:
+      - monitor_network
 
   node-exporter:
-    image: prom/node-exporter
+    image: prom/node-exporter:latest
     command:
       - '--path.rootfs=/host'
     volumes:
@@ -26,11 +29,12 @@ services:
     deploy:
       mode: global
     ports:
-      - target: 9100
-        published: 9100
-        mode: host
+      - "9100:9100"
     labels:
       - "monitoring=true"
+    networks:
+      - monitor_network
+
 
   grafana:
     image: grafana/grafana:latest
@@ -40,13 +44,20 @@ services:
     ports:
       - 3000:3000
     volumes:
-      - ./files/grafana.ini:/etc/grafana/grafana.ini:ro
       - grafana-data:/var/lib/grafana
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
     logging:
       driver: "json-file"
       options:
         max-size: "8m"
         max-file: "10"
+    networks:
+      - monitor_network
+
  
   traefik:
     image: traefik:v2.10
@@ -56,6 +67,7 @@ services:
       - --entrypoints.web.address=:80
       - --api.dashboard=true
       - --entrypoints.api.address=:8000
+      - --log.level=DEBUG
     ports:
       - "80:80"
       - "8080:8080"  # Traefik 대시보드
@@ -63,22 +75,26 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     deploy:
       placement:
-        constraints:
-          - node.role == manager
+        constraints: [node.role == manager]
       replicas: 1
+    networks:
+      - monitor_network
+
 
   whoami:
-    image: containous/whoami
+    image: traefik/whoami
     deploy:
       labels:
         - "traefik.enable=true"
         - "traefik.http.routers.whoami.rule=Host(`whoami.local`)"
         - "traefik.http.services.whoami.loadbalancer.server.port=80"
         - "traefik.http.routers.whoami.entrypoints=web"
+    networks:
+      - monitor_network
+
 
   metrics-api:
-    image: ./metrics-api 
-    container_name: metrics-api
+    image: metrics-api:1.0
     working_dir: /app
     volumes:
       - ./metrics-api:/app
@@ -86,8 +102,11 @@ services:
       - "8000:8000"
     depends_on:
       - prometheus
+    deploy:
+      placement:
+        constraints: [node.role == manager]
     networks:
-      - monitor-net
+      - monitor_network
 
 # /etc/hosts에 다음 줄 추가 필요:
 # 127.0.0.1 whoami.local
@@ -98,3 +117,10 @@ volumes:
 configs:
   prometheus_config:
     file: ./prometheus.yml
+  grafana_config:
+    file: ./files/grafana.ini
+
+networks:
+  monitor_network:
+    driver: overlay
+    attachable: true
