@@ -3,14 +3,14 @@ global:
 
 scrape_configs:
   - job_name: 'node-exporter'
-    static_configs:  # worker node 정적 ip 할당
-      - targets:
-          - 'node1:211.183.4.128:9100'
-          - 'node2:211.183.4.129:9100'
-          - 'node3:211.183.4.130:9100'
-          - 'node4:211.183.4.131:9100'
-          - 'node5:211.183.4.132:9100'
-          - 'node6:211.183.4.133:9100'
+    # static_configs:  # worker node 정적 ip 할당
+    #   - targets:
+    #       - 'node1:211.183.4.128:9100'
+    #       - 'node2:211.183.4.129:9100'
+    #       - 'node3:211.183.4.130:9100'
+    #       - 'node4:211.183.4.131:9100'
+    #       - 'node5:211.183.4.132:9100'
+    #       - 'node6:211.183.4.133:9100'
     dns_sd_configs:  # worker node 자동 ip 할당
       - names:
           - 'tasks.node-exporter'
