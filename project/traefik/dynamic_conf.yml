@@ -1,3 +1,19 @@
 http:
-  routers: {}
-  services: {}
+  routers:
+    dynamic-router:
+      rule: "PathPrefix(`/`)"
+      service: dynamic-service
+      entryPoints:
+        - web
+        
+    dashboard:
+      rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+      service: api@internal
+      entryPoints:
+        - api
+
+  services:
+    dynamic-service:
+      loadBalancer:
+        servers:
+          - url: "http://localhost:80"
