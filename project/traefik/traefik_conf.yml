@@ -1,8 +1,0 @@
-providers:
-  file:
-    filename: /etc/traefik/dynamic_conf.yml
-    watch: true
-
-entryPoints:
-  web:
-    address: ":8088"
