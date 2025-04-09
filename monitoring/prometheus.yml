@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s   # 데이터 수집 최소 간격
+
+scrape_configs:
+  - job_name: 'node-exporter'
+
+    dockerswarm_sd_configs:
+      - host: unix:///var/run/docker.sock
+        role: tasks
+    
+    
+    # DNS로 가져온 컨테이너의 IP를 무시하고, 대신 호스트 IP를 스크랩
+
+    relabel_configs:
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: $1:9100

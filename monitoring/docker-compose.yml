@@ -1,0 +1,144 @@
+version: '3.7'
+
+services:
+
+  prometheus:
+    image: prom/prometheus:latest
+    user: root
+    ports:
+      - "9090:9090"
+    configs:
+      - source: prometheus_config
+        target: /etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=1m'
+      - '--storage.tsdb.retention.size=100MB'
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]         # manager 노드에게만 prometheus 설치
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - monitor_network
+    environment:
+      - TZ=Asia/Seoul                               # 시간을 UST -> KST로 변경
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - /:/host:ro,rslave
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.role == worker]
+    ports:
+      - target: 9100
+        published: 9100
+        mode: host
+    labels:
+      - "monitoring=true"
+    networks:
+      - monitor_network
+
+  grafana:
+    image: grafana/grafana:latest
+    
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - TZ=Asia/Seoul
+    ports:
+      - 3000:3000
+    volumes:
+      - ./files/grafana.ini:/etc/grafana/grafana.ini
+      - ./files/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./files/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./files/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards.yml
+      - grafana-data:/var/lib/grafana
+    deploy:
+      restart_policy:
+        condition: on-failure
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "8m"
+        max-file: "10"
+    networks:
+      - monitor_network
+
+ 
+  traefik:
+    image: traefik:v2.10
+    command:
+      - --providers.docker.swarmmode=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.api.address=:8080
+      - --providers.file.filename=/etc/traefik/dynamic_conf.yml
+      - --providers.file.watch=true
+      - --api.dashboard=true
+      - --log.level=DEBUG
+    ports:
+      - "8088:80"      # 외부 8088 → Traefik 80 (웹 요청용)
+      - "8089:8080"    # 외부 8089 → Traefik 8080 (대시보드용)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      #- ./traefik/dynamic_conf.yml:/etc/traefik/dynamic_conf.yml     # bind mount -> swarm에서는 인식 안 됨
+      - traefik-config:/etc/traefik                                   # named mount
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+      replicas: 1
+    networks:
+      - monitor_network
+    environment:
+      - TZ=Asia/Seoul
+
+
+  metrics-api:
+    build:
+      context: ./metrics-api
+    image: metrics-api:1.0
+    working_dir: /app
+    volumes:
+      - ./metrics-api:/app
+      #- ./traefik/dynamic_conf.yml:/etc/traefik/dynamic_conf.yml     # bind mount
+      - traefik-config:/etc/traefik                                   # named mount
+    ports:
+      - target: 8000
+        published: 8000
+        mode: host
+    depends_on:
+      - prometheus
+    deploy:
+      placement:
+        constraints: [node.role == manager]
+    networks:
+      - monitor_network
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1          # 로그가 버퍼를 거쳐 출력되지 않고 즉시 출력되도록 설정 (로그 출력 지연 방지)
+
+
+volumes:
+  grafana-data: {}
+  traefik-config: {}                # named mount를 위한 volumes 설정
+
+configs:
+  prometheus_config:
+    file: ./prometheus.yml
+
+networks:
+  monitor_network:                  # 서비스들이 서로 통신할 수 있도록 별도의 overlay 네트워크 정의
+    driver: overlay
+    attachable: true
+
