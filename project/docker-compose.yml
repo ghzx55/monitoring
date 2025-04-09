@@ -1,8 +1,10 @@
 version: '3.7'
 
 services:
+
   prometheus:
     image: prom/prometheus:latest
+    user: root
     ports:
       - "9090:9090"
     configs:
@@ -16,9 +18,13 @@ services:
       mode: replicated
       replicas: 1
       placement:
-        constraints: [node.role == manager]
+        constraints: [node.role == manager]         # manager 노드에게만 prometheus 설치
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - monitor_network
+    environment:
+      - TZ=Asia/Seoul                               # 시간을 UST -> KST로 변경
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -29,12 +35,13 @@ services:
     deploy:
       mode: global
     ports:
-      - "9100:9100"
+      - target: 9100
+        published: 9100
+        mode: host
     labels:
       - "monitoring=true"
     networks:
       - monitor_network
-
 
   grafana:
     image: grafana/grafana:latest
@@ -42,17 +49,18 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      
+      - TZ=Asia/Seoul
     ports:
       - 3000:3000
     volumes:
       - ./files/grafana.ini:/etc/grafana/grafana.ini
       - ./files/provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./files/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./files/provisioning/dashboards.yml:/etc/grafana/provisioning/dashboards.yml
       - grafana-data:/var/lib/grafana
     deploy:
       restart_policy:
-        condition: on-failure   # restart 대체
+        condition: on-failure
       mode: replicated
       replicas: 1
       placement:
@@ -82,33 +90,27 @@ services:
       - "8089:8080"    # 외부 8089 → Traefik 8080 (대시보드용)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./traefik/dynamic_conf.yml:/etc/traefik/dynamic_conf.yml
+      #- ./traefik/dynamic_conf.yml:/etc/traefik/dynamic_conf.yml     # bind mount -> swarm에서는 인식 안 됨
+      - traefik-config:/etc/traefik                                   # named mount
     deploy:
       placement:
         constraints: [node.role == manager]
       replicas: 1
     networks:
       - monitor_network
-
-
-  # whoami:
-  #   image: traefik/whoami
-  #   deploy:
-  #     labels:
-  #       - "traefik.enable=true"
-  #       - "traefik.http.routers.whoami.rule=Host(`whoami.local`)"
-  #       - "traefik.http.services.whoami.loadbalancer.server.port=80"
-  #       - "traefik.http.routers.whoami.entrypoints=web"
-  #   networks:
-  #     - monitor_network
+    environment:
+      - TZ=Asia/Seoul
 
 
   metrics-api:
+    build:
+      context: ./metrics-api
     image: metrics-api:1.0
     working_dir: /app
     volumes:
       - ./metrics-api:/app
-      - ./traefik/dynamic_conf.yml:/traefik/dynamic_conf.yml
+      #- ./traefik/dynamic_conf.yml:/etc/traefik/dynamic_conf.yml     # bind mount
+      - traefik-config:/etc/traefik                                   # named mount
     ports:
       - target: 8000
         published: 8000
@@ -120,20 +122,21 @@ services:
         constraints: [node.role == manager]
     networks:
       - monitor_network
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1          # 로그가 버퍼를 거쳐 출력되지 않고 즉시 출력되도록 설정 (로그 출력 지연 방지)
 
-# /etc/hosts에 다음 줄 추가 필요:
-# 127.0.0.1 whoami.local
 
 volumes:
-   grafana-data: {}
+  grafana-data: {}
+  traefik-config: {}                # named mount를 위한 volumes 설정
 
 configs:
   prometheus_config:
     file: ./prometheus.yml
-  # grafana_config:
-  #   file: ./files/grafana.ini
 
 networks:
-  monitor_network:
+  monitor_network:                  # 서비스들이 서로 통신할 수 있도록 별도의 overlay 네트워크 정의
     driver: overlay
     attachable: true
+

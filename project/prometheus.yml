@@ -1,26 +1,27 @@
 global:
-  scrape_interval: 5s   # 최소 간격
+  scrape_interval: 5s   # 데이터 수집 최소 간격
 
 scrape_configs:
   - job_name: 'node-exporter'
-    static_configs:  # worker node 정적 ip 할당
-      - targets:
-          # - 'node1:211.183.4.128:9100'
-          # - 'node2:211.183.4.129:9100'
-          # - 'node3:211.183.4.130:9100'
-          # - 'node4:211.183.4.131:9100'
-          # - 'node5:211.183.4.132:9100'
-          # - 'node6:211.183.4.133:9100'
-          # - '192.168.3.132:9100'
-          # - '192.168.3.113:9100'
-          # - '192.168.1.149:9100'
-          - '211.183.3.201:9100'
-          - '211.183.3.202:9100'
-          - '211.183.3.203:9100'
+    # static_configs:     # worker node에 대한 정적 ip 할당
+    #   - targets:
+    #       - '211.183.3.201:9100'
+    #       - '211.183.3.202:9100'
+    #       - '211.183.3.203:9100'
+    #       - '211.183.3.204:9100'
     
+    # dns_sd_configs:     # worker node에 대해 자동으로 ip 할당
+    #   - names:
+    #       - 'tasks.node-exporter'
+    #     type: 'A'
+    #     port: 9100
 
-    #    dns_sd_configs:  # worker node 자동 ip 할당
-      #      - names:
-        #          - 'tasks.node-exporter'
-            #        type: 'A'
-          #       port: 9100
+    dockerswarm_sd_configs:
+      - host: unix:///var/run/docker.sock
+        role: tasks
+
+    relabel_configs:
+      # DNS로 가져온 컨테이너의 IP 무시하고, 대신 호스트 IP를 가져옴
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: $1:9100

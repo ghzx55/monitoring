@@ -1,48 +1,75 @@
 import requests
 from datetime import datetime
 import time
+import os
 
+# Main node의 Prometheus 대시보드 경로
 PROMETHEUS_URL = "http://211.183.3.200:9090"
-QUERY = '100 - avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[1m])) * 100'
 
-# Traefik 설정 경로
-CONFIG_PATH = "/traefik/dynamic_conf.yml"
+# 물리 자원에 대한 쿼리 정의
+CPU_QUERY = '100 - avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[15s])) * 100'
+RAM_QUERY = '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
 
-def get_node_cpu_usage(retries=3, delay=3):   # prometheus 불러오기 실패시 최대 3번까지 다시 시도
-    for attempt in range(retries):
-        try:
-            res = requests.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": QUERY})
-            res.raise_for_status()
-            result = res.json()["data"]["result"]
+# 동적 라우팅 설정 파일 경로
+CONFIG_PATH = "/etc/traefik/dynamic_conf.yml"
 
-            usage = []
-            for item in result:
-                instance = item["metric"]["instance"]
-                value = float(item["value"][1])  # CPU 사용률 (%)
-                usage.append((instance, value))
-            return usage
+def query_prometheus(query):
+    try:
+        res = requests.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": query})
+        res.raise_for_status()
+        return res.json()["data"]["result"]
+    except Exception as e:
+        print(f"[ERROR] Prometheus query failed: {e}")
+        return []
 
-        except Exception as e:
-            print(f"[ERROR] Prometheus 쿼리 실패 (시도 {attempt + 1}): {e}")
-            time.sleep(delay)
+# CPU 사용량 출력
+def get_cpu_usages():
+    result = query_prometheus(CPU_QUERY)
+    return {item["metric"]["instance"]: float(item["value"][1]) for item in result}
 
-    return []
+# RAM 사용량 출력
+def get_ram_usages():
+    result = query_prometheus(RAM_QUERY)
+    return {item["metric"]["instance"]: float(item["value"][1]) for item in result}
 
 def get_best_node():
-    usage = get_node_cpu_usage()
-    if not usage:
-        print("[ERROR] Prometheus에서 서버 정보 못 가져옴")
-        return None
+    cpu_usages = get_cpu_usages()
+    ram_usages = get_ram_usages()
 
-    # 가장 CPU 사용률 낮은 노드 선택
-    best_node = min(usage, key=lambda x: x[1])
-    print(f"[INFO] Best node: {best_node[0]} (CPU: {best_node[1]:.2f}%)")
+    if not cpu_usages or not ram_usages:
+        print("[ERROR] Failed to fetch resource data from Prometheus.")
+        return None
+    
+    # CPU와 RAM을 고려한 node들의 가용 점수 계산
+    scores = {}
+
+    # CPU와 RAM에 대한 가중치 설정
+    cpu_weight = 0.8
+    ram_weight = 0.2
+
+    for instance in cpu_usages:
+        cpu = cpu_usages.get(instance, 100)
+        ram = ram_usages.get(instance, 100)
+        score = (100 - cpu) * cpu_weight + (100 - ram) * ram_weight
+        scores[instance] = score
+        print(f"[INFO] {instance} → CPU: {cpu:.1f}%, RAM: {ram:.1f}%, SCORE: {score:.1f}")
+
+    best_node = max(scores.items(), key=lambda x: x[1])
+    print(f"[INFO] Idle node: {best_node[0]} (SCORE: {best_node[1]:.2f})")
     return best_node[0]
 
+# dynamic_conf.yml 생성
 def generate_dynamic_config():
     best_node = get_best_node()
-    if not best_node:
-        return f"""\
+
+    if best_node and ":" in best_node:
+        best_ip = best_node.split(":")[0]
+    else:
+        best_ip = best_node or "localhost"
+
+    print(f"[DEBUG] Best IP: {best_ip}")
+
+    return f"""\
 http:
   routers:
     dynamic-router:
@@ -61,18 +88,19 @@ http:
     dynamic-service:
       loadBalancer:
         servers:
-          - url: "http://{best_node.split(':')[0]}:80"
+          - url: "http://{best_ip}:8020"
 """
 
 def write_config_file(config_text, path=CONFIG_PATH):
     try:
         with open(path, "w") as f:
             f.write(config_text)
-        print(f"[{datetime.now()}] [INFO] Config 파일 저장 완료: {path}")
+            f.flush()
+            os.fsync(f.fileno())
+        print(f"[{datetime.now()}] [INFO] Config file save complete: {path}")
     except Exception as e:
-        print(f"[{datetime.now()}] [ERROR] Config 저장 실패: {e}")
+        print(f"[{datetime.now()}] [ERROR] Config file save failed: {e}")
 
 if __name__ == "__main__":
-    best_node = get_best_node()
-    config_text = generate_dynamic_config(best_node)
+    config_text = generate_dynamic_config()
     write_config_file(config_text)

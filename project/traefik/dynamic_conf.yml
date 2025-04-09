@@ -5,7 +5,7 @@ http:
       service: dynamic-service
       entryPoints:
         - web
-        
+
     dashboard:
       rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
       service: api@internal
@@ -16,4 +16,4 @@ http:
     dynamic-service:
       loadBalancer:
         servers:
-          - url: "http://localhost:80"
+          - url: "http://localhost:8020"
